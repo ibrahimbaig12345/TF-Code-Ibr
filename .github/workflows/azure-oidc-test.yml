@@ -1,0 +1,33 @@
+
+name: Test Azure OIDC
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  azure-oidc-test:
+    runs-on: [self-hosted, linux, x64, azure-vmss-lab]
+
+    steps:
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify Azure access
+        run: |
+          az account show \
+            --query "{subscription:id, tenant:tenantId}" \
+            --output table
+
+          az group show \
+            --name rg-gh-runner-lab \
+            --query "{name:name, location:location}" \
+            --output table
+

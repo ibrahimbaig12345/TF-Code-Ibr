@@ -1,0 +1,21 @@
+
+name: Test Azure VMSS Runner
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-runner:
+    runs-on: [self-hosted, linux, x64, azure-vmss-lab]
+
+    steps:
+      - name: Verify runner
+        run: |
+          echo "Runner: $RUNNER_NAME"
+          echo "OS: $RUNNER_OS"
+          echo "Architecture: $RUNNER_ARCH"
+          hostname
+          uname -a

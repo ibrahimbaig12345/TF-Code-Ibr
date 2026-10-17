@@ -1,53 +1,46 @@
-name: ACA Self Hosted Runner Test
+name: ACA Runner Toolchain Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  aca-runner-test:
-    name: Test ACA Runner
-
+  toolchain-test:
     runs-on:
       - self-hosted
       - aca-poc-linux
 
     steps:
-      - name: Basic runner test
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate base tools
         shell: bash
         run: |
           set -e
 
-          echo "======================================"
-          echo "ACA SELF-HOSTED RUNNER TEST"
-          echo "======================================"
-
-          echo ""
-          echo "Current user:"
-          whoami || true
-
-          echo ""
-          echo "Operating system:"
-          cat /etc/os-release
-
-          echo ""
-          echo "Git version:"
+          echo "=== GIT ==="
           git --version
 
-          echo ""
-          echo "Azure CLI version:"
+          echo "=== AZURE CLI ==="
           az version
 
-          echo ""
-          echo "Working directory:"
-          pwd
+          echo "=== TERRAFORM ==="
+          terraform version
 
-          echo ""
-          echo "Runner environment:"
-          echo "RUNNER_NAME=${RUNNER_NAME}"
-          echo "RUNNER_OS=${RUNNER_OS}"
-          echo "RUNNER_ARCH=${RUNNER_ARCH}"
+          echo "=== POWERSHELL ==="
+          pwsh --version
 
-          echo ""
+          echo "=== RUNNER ==="
+          echo "Name: $RUNNER_NAME"
+          echo "OS: $RUNNER_OS"
+          echo "Architecture: $RUNNER_ARCH"
+
           echo "======================================"
-          echo "ACA RUNNER TEST SUCCESSFUL"
+          echo "ACA RUNNER TOOLCHAIN TEST SUCCESSFUL"
           echo "======================================"
+
+      - name: Test PowerShell execution
+        shell: pwsh
+        run: |
+          Write-Host "PowerShell execution successful"
+          Write-Host "PowerShell version: $($PSVersionTable.PSVersion)"

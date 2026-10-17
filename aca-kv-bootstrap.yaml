@@ -1,0 +1,117 @@
+identity:
+  type: UserAssigned
+  userAssignedIdentities:
+    /subscriptions/35599a72-2311-44a7-b4f9-cd67ce8a7f93/resourceGroups/rg-github-runner-poc/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-github-runner-poc: {}
+
+location: centralindia
+
+name: caj-runner-test
+
+properties:
+  configuration:
+    manualTriggerConfig:
+      parallelism: 1
+      replicaCompletionCount: 1
+    replicaRetryLimit: 0
+    replicaTimeout: 600
+    triggerType: Manual
+
+  environmentId: /subscriptions/35599a72-2311-44a7-b4f9-cd67ce8a7f93/resourceGroups/rg-github-runner-poc/providers/Microsoft.App/managedEnvironments/cae-github-runner-poc
+
+  template:
+    containers:
+      - name: caj-runner-test
+
+        image: mcr.microsoft.com/deployment-environments/runners/core:latest
+
+        imageType: ContainerImage
+
+        command:
+          - /bin/bash
+
+        args:
+          - -c
+          - |
+            set -e
+
+            echo "======================================"
+            echo "KEY VAULT BOOTSTRAP"
+            echo "======================================"
+
+            echo "=== MANAGED IDENTITY LOGIN ==="
+
+            az login \
+              --identity \
+              --client-id "f090a570-9338-4393-b0bd-0f48e7fb7723" \
+              --output none
+
+            echo "Managed Identity login successful"
+
+            echo "=== KEY VAULT DNS ==="
+
+            getent hosts kv-ghrunner-ibr-poc.vault.azure.net
+
+            echo "=== VALIDATING INPUTS ==="
+
+            if [ -z "$GH_APP_ID" ]; then
+              echo "ERROR: GH_APP_ID is empty"
+              exit 1
+            fi
+
+            if [ -z "$GH_INSTALLATION_ID" ]; then
+              echo "ERROR: GH_INSTALLATION_ID is empty"
+              exit 1
+            fi
+
+            if [ -z "$GH_PRIVATE_KEY_B64" ]; then
+              echo "ERROR: GH_PRIVATE_KEY_B64 is empty"
+              exit 1
+            fi
+
+            echo "Input validation successful"
+
+            echo "=== WRITING APP ID ==="
+
+            az keyvault secret set \
+              --vault-name "kv-ghrunner-ibr-poc" \
+              --name "github-app-id" \
+              --value "$GH_APP_ID" \
+              --output none
+
+            echo "github-app-id created"
+
+            echo "=== WRITING INSTALLATION ID ==="
+
+            az keyvault secret set \
+              --vault-name "kv-ghrunner-ibr-poc" \
+              --name "github-installation-id" \
+              --value "$GH_INSTALLATION_ID" \
+              --output none
+
+            echo "github-installation-id created"
+
+            echo "=== WRITING PRIVATE KEY ==="
+
+            az keyvault secret set \
+              --vault-name "kv-ghrunner-ibr-poc" \
+              --name "github-app-private-key-b64" \
+              --value "$GH_PRIVATE_KEY_B64" \
+              --output none
+
+            echo "github-app-private-key-b64 created"
+
+            echo "======================================"
+            echo "KEY VAULT BOOTSTRAP SUCCESSFUL"
+            echo "======================================"
+
+            sleep 300
+
+        resources:
+          cpu: 0.5
+          memory: 1Gi
+
+  workloadProfileName: Consumption
+
+resourceGroup: rg-github-runner-poc
+
+type: Microsoft.App/jobs

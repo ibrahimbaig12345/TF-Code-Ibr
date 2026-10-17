@@ -1,0 +1,327 @@
+identity:
+  type: UserAssigned
+  userAssignedIdentities:
+    /subscriptions/35599a72-2311-44a7-b4f9-cd67ce8a7f93/resourceGroups/rg-github-runner-poc/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-github-runner-poc: {}
+
+location: centralindia
+
+name: caj-github-runner-poc
+
+properties:
+  configuration:
+    manualTriggerConfig:
+      parallelism: 1
+      replicaCompletionCount: 1
+    replicaRetryLimit: 0
+    replicaTimeout: 3600
+    triggerType: Manual
+
+  environmentId: /subscriptions/35599a72-2311-44a7-b4f9-cd67ce8a7f93/resourceGroups/rg-github-runner-poc/providers/Microsoft.App/managedEnvironments/cae-github-runner-poc
+
+  template:
+    containers:
+      - name: github-runner
+
+        image: mcr.microsoft.com/deployment-environments/runners/core:latest
+
+        imageType: ContainerImage
+
+        command:
+          - /bin/bash
+
+        args:
+          - -c
+          - |
+            set -e
+
+            echo "======================================"
+            echo "ACA GITHUB ACTIONS RUNNER"
+            echo "======================================"
+
+            echo "Repository: ${GITHUB_OWNER}/${GITHUB_REPO}"
+
+            echo "=== INSTALLING BASE PACKAGES ==="
+
+            tdnf install -y \
+              git \
+              tar \
+              gzip \
+              unzip \
+              ca-certificates \
+              curl
+
+            echo "=== INSTALLING TERRAFORM ==="
+
+            TERRAFORM_VERSION="1.13.4"
+
+            curl \
+              --fail \
+              --location \
+              --retry 3 \
+              --output /tmp/terraform.zip \
+              "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+
+            unzip \
+              -o \
+              /tmp/terraform.zip \
+              -d /usr/local/bin
+
+            chmod +x /usr/local/bin/terraform
+
+            rm -f /tmp/terraform.zip
+
+            echo "Terraform installed:"
+            terraform version
+
+            echo "=== INSTALLING POWERSHELL ==="
+
+            PWSH_VERSION="7.5.4"
+
+            mkdir -p /opt/microsoft/powershell/7
+
+            curl \
+              --fail \
+              --location \
+              --retry 3 \
+              --output /tmp/powershell.tar.gz \
+              "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell-${PWSH_VERSION}-linux-x64.tar.gz"
+
+            tar \
+              -xzf /tmp/powershell.tar.gz \
+              -C /opt/microsoft/powershell/7
+
+            chmod +x /opt/microsoft/powershell/7/pwsh
+
+            ln -sf \
+              /opt/microsoft/powershell/7/pwsh \
+              /usr/local/bin/pwsh
+
+            rm -f /tmp/powershell.tar.gz
+
+            echo "PowerShell installed:"
+            pwsh --version
+
+            echo "=== VERIFYING RUNNER TOOLCHAIN ==="
+
+            echo "Git:"
+            git --version
+
+            echo "Azure CLI:"
+            az version
+
+            echo "Terraform:"
+            terraform version
+
+            echo "PowerShell:"
+            pwsh --version
+
+            echo "=== AZURE LOGIN FOR KEY VAULT ==="
+
+            az login \
+              --identity \
+              --client-id "f090a570-9338-4393-b0bd-0f48e7fb7723" \
+              --output none
+
+            echo "Azure Managed Identity login successful"
+
+            echo "=== READING GITHUB APP DATA ==="
+
+            GH_APP_ID=$(az keyvault secret show \
+              --vault-name "kv-ghrunner-ibr-poc" \
+              --name "github-app-id" \
+              --query value \
+              --output tsv)
+
+            GH_INSTALLATION_ID=$(az keyvault secret show \
+              --vault-name "kv-ghrunner-ibr-poc" \
+              --name "github-installation-id" \
+              --query value \
+              --output tsv)
+
+            GH_PRIVATE_KEY_B64=$(az keyvault secret show \
+              --vault-name "kv-ghrunner-ibr-poc" \
+              --name "github-app-private-key-b64" \
+              --query value \
+              --output tsv)
+
+            echo "GitHub App data retrieved successfully"
+
+            echo "=== PREPARING GITHUB APP KEY ==="
+
+            mkdir -p /tmp/github-app
+
+            echo "$GH_PRIVATE_KEY_B64" \
+              | base64 -d \
+              > /tmp/github-app/private-key.pem
+
+            chmod 600 /tmp/github-app/private-key.pem
+
+            echo "=== GENERATING GITHUB APP JWT ==="
+
+            NOW=$(date +%s)
+            IAT=$((NOW - 60))
+            EXP=$((NOW + 540))
+
+            HEADER='{"alg":"RS256","typ":"JWT"}'
+
+            PAYLOAD=$(printf \
+              '{"iat":%s,"exp":%s,"iss":"%s"}' \
+              "$IAT" \
+              "$EXP" \
+              "$GH_APP_ID")
+
+            base64url() {
+              openssl base64 -A \
+                | tr '+/' '-_' \
+                | tr -d '='
+            }
+
+            HEADER_B64=$(printf '%s' "$HEADER" | base64url)
+            PAYLOAD_B64=$(printf '%s' "$PAYLOAD" | base64url)
+
+            JWT_UNSIGNED="${HEADER_B64}.${PAYLOAD_B64}"
+
+            SIGNATURE=$(printf '%s' "$JWT_UNSIGNED" \
+              | openssl dgst \
+                  -sha256 \
+                  -sign /tmp/github-app/private-key.pem \
+              | base64url)
+
+            GH_JWT="${JWT_UNSIGNED}.${SIGNATURE}"
+
+            echo "GitHub App JWT generated successfully"
+
+            echo "=== OBTAINING INSTALLATION TOKEN ==="
+
+            INSTALL_HTTP_CODE=$(curl \
+              --silent \
+              --output /tmp/github-app/install-token.json \
+              --write-out "%{http_code}" \
+              --request POST \
+              --url "https://api.github.com/app/installations/${GH_INSTALLATION_ID}/access_tokens" \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GH_JWT")
+
+            if [ "$INSTALL_HTTP_CODE" != "201" ]; then
+              echo "ERROR: Installation token request failed"
+              exit 1
+            fi
+
+            INSTALLATION_TOKEN=$(sed -n \
+              's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+              /tmp/github-app/install-token.json)
+
+            echo "Installation access token received"
+
+            echo "=== REQUESTING RUNNER REGISTRATION TOKEN ==="
+
+            RUNNER_HTTP_CODE=$(curl \
+              --silent \
+              --output /tmp/github-app/runner-token.json \
+              --write-out "%{http_code}" \
+              --request POST \
+              --url "https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runners/registration-token" \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $INSTALLATION_TOKEN")
+
+            if [ "$RUNNER_HTTP_CODE" != "201" ]; then
+              echo "ERROR: Runner registration token request failed"
+              exit 1
+            fi
+
+            RUNNER_TOKEN=$(sed -n \
+              's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+              /tmp/github-app/runner-token.json)
+
+            echo "Runner registration token received"
+
+            echo "=== DOWNLOADING GITHUB ACTIONS RUNNER ==="
+
+            mkdir -p /actions-runner
+            cd /actions-runner
+
+            RUNNER_VERSION=$(curl \
+              --silent \
+              --location \
+              https://api.github.com/repos/actions/runner/releases/latest \
+              | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\([^"]*\)".*/\1/p' \
+              | head -n 1)
+
+            echo "Runner version: $RUNNER_VERSION"
+
+            RUNNER_ARCHIVE="actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
+
+            curl \
+              --fail \
+              --location \
+              --retry 3 \
+              --output "$RUNNER_ARCHIVE" \
+              "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_ARCHIVE}"
+
+            tar xzf "$RUNNER_ARCHIVE"
+
+            rm -f "$RUNNER_ARCHIVE"
+
+            echo "=== CONFIGURING EPHEMERAL RUNNER ==="
+
+            export RUNNER_ALLOW_RUNASROOT=1
+
+            RUNNER_NAME="aca-${HOSTNAME}"
+
+            ./config.sh \
+              --url "https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}" \
+              --token "$RUNNER_TOKEN" \
+              --name "$RUNNER_NAME" \
+              --labels "$RUNNER_LABEL" \
+              --work "_work" \
+              --ephemeral \
+              --unattended \
+              --disableupdate
+
+            echo "Runner configured successfully"
+
+            echo "=== CREDENTIAL CLEANUP ==="
+
+            unset GH_PRIVATE_KEY_B64
+            unset GH_JWT
+            unset INSTALLATION_TOKEN
+            unset RUNNER_TOKEN
+
+            rm -f /tmp/github-app/private-key.pem
+            rm -f /tmp/github-app/install-token.json
+            rm -f /tmp/github-app/runner-token.json
+
+            echo "Authentication material removed"
+
+            echo "======================================"
+            echo "RUNNER READY"
+            echo "======================================"
+
+            ./run.sh
+
+            echo "======================================"
+            echo "RUNNER FINISHED"
+            echo "======================================"
+
+        env:
+          - name: GITHUB_OWNER
+            value: "ibrahimbaig12345"
+
+          - name: GITHUB_REPO
+            value: "TF-Code-Ibr"
+
+          - name: RUNNER_LABEL
+            value: "aca-poc-linux"
+
+          - name: RUNNER_ALLOW_RUNASROOT
+            value: "1"
+
+        resources:
+          cpu: 1.0
+          memory: 2Gi
+
+  workloadProfileName: Consumption
+
+resourceGroup: rg-github-runner-poc
+
+type: Microsoft.App/jobs

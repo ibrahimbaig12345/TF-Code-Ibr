@@ -1,4 +1,4 @@
-name: ACA Azure OIDC Test
+name: ACA Terraform OIDC Test
 
 on:
   workflow_dispatch:
@@ -8,73 +8,77 @@ permissions:
   contents: read
 
 jobs:
-  oidc-test:
-    name: Test Azure OIDC
-
+  terraform:
     runs-on:
       - self-hosted
       - aca-poc-linux
+
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      TF_VAR_client_id: ${{ secrets.AZURE_CLIENT_ID }}
+      TF_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
+      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Display runner information
-        shell: bash
-        run: |
-          echo "======================================"
-          echo "ACA RUNNER"
-          echo "======================================"
-
-          echo "Runner Name: $RUNNER_NAME"
-          echo "Runner OS: $RUNNER_OS"
-          echo "Runner Architecture: $RUNNER_ARCH"
-
-      - name: Azure Login using GitHub OIDC
+      - name: Azure Login using OIDC
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Validate Azure OIDC authentication
+      - name: Generate unique storage account name
         shell: bash
         run: |
-          set -e
+          STORAGE_NAME="stacapoc${GITHUB_RUN_NUMBER}${GITHUB_RUN_ATTEMPT}"
 
+          echo "Storage account: $STORAGE_NAME"
+
+          echo "TF_VAR_storage_account_name=$STORAGE_NAME" >> "$GITHUB_ENV"
+
+      - name: Terraform Init
+        shell: bash
+        working-directory: terraform-poc
+        run: |
+          terraform init
+
+      - name: Terraform Validate
+        shell: bash
+        working-directory: terraform-poc
+        run: |
+          terraform validate
+
+      - name: Terraform Plan
+        shell: bash
+        working-directory: terraform-poc
+        run: |
+          terraform plan \
+            -out=tfplan
+
+      - name: Terraform Apply
+        shell: bash
+        working-directory: terraform-poc
+        run: |
+          terraform apply \
+            -auto-approve \
+            tfplan
+
+      - name: Verify Azure resource
+        shell: bash
+        run: |
           echo "======================================"
-          echo "AZURE OIDC AUTHENTICATION"
+          echo "TERRAFORM DEPLOYMENT SUCCESSFUL"
           echo "======================================"
 
-          az account show \
-            --query "{Subscription:name,SubscriptionId:id,Tenant:tenantId}" \
+          az storage account show \
+            --name "$TF_VAR_storage_account_name" \
+            --resource-group "rg-github-runner-poc" \
+            --query "{Name:name,Location:location,ProvisioningState:provisioningState}" \
             --output table
-
-          CURRENT_SUBSCRIPTION=$(az account show --query id --output tsv)
-
-          if [ "$CURRENT_SUBSCRIPTION" != "35599a72-2311-44a7-b4f9-cd67ce8a7f93" ]; then
-            echo "ERROR: Unexpected Azure subscription"
-            exit 1
-          fi
-
-          echo ""
-          echo "AZURE OIDC AUTHENTICATION SUCCESSFUL"
-
-      - name: Validate Terraform
-        shell: bash
-        run: |
-          echo "======================================"
-          echo "TERRAFORM"
-          echo "======================================"
-
-          terraform version
-
-      - name: Validate PowerShell
-        shell: pwsh
-        run: |
-          Write-Host "======================================"
-          Write-Host "POWERSHELL"
-          Write-Host "======================================"
-
-          Write-Host "PowerShell version: $($PSVersionTable.PSVersion)"
-          Write-Host "PowerShell test successful"

@@ -1,0 +1,220 @@
+identity:
+  type: UserAssigned
+  userAssignedIdentities:
+    /subscriptions/35599a72-2311-44a7-b4f9-cd67ce8a7f93/resourceGroups/rg-github-runner-poc/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-github-runner-poc: {}
+
+location: centralindia
+
+name: caj-runner-test
+
+properties:
+  configuration:
+    manualTriggerConfig:
+      parallelism: 1
+      replicaCompletionCount: 1
+    replicaRetryLimit: 0
+    replicaTimeout: 600
+    triggerType: Manual
+
+  environmentId: /subscriptions/35599a72-2311-44a7-b4f9-cd67ce8a7f93/resourceGroups/rg-github-runner-poc/providers/Microsoft.App/managedEnvironments/cae-github-runner-poc
+
+  template:
+    containers:
+      - name: caj-runner-test
+
+        image: mcr.microsoft.com/deployment-environments/runners/core:latest
+
+        imageType: ContainerImage
+
+        command:
+          - /bin/bash
+
+        args:
+          - -c
+          - |
+            set -e
+
+            echo "======================================"
+            echo "GITHUB APP AUTHENTICATION TEST"
+            echo "======================================"
+
+            echo "=== AZURE LOGIN ==="
+
+            az login \
+              --identity \
+              --client-id "f090a570-9338-4393-b0bd-0f48e7fb7723" \
+              --output none
+
+            echo "Azure login successful"
+
+            echo "=== READING GITHUB APP DATA ==="
+
+            GH_APP_ID=$(az keyvault secret show \
+              --vault-name "kv-ghrunner-ibr-poc" \
+              --name "github-app-id" \
+              --query value \
+              --output tsv)
+
+            GH_INSTALLATION_ID=$(az keyvault secret show \
+              --vault-name "kv-ghrunner-ibr-poc" \
+              --name "github-installation-id" \
+              --query value \
+              --output tsv)
+
+            GH_PRIVATE_KEY_B64=$(az keyvault secret show \
+              --vault-name "kv-ghrunner-ibr-poc" \
+              --name "github-app-private-key-b64" \
+              --query value \
+              --output tsv)
+
+            if [ -z "$GH_APP_ID" ]; then
+              echo "ERROR: App ID missing"
+              exit 1
+            fi
+
+            if [ -z "$GH_INSTALLATION_ID" ]; then
+              echo "ERROR: Installation ID missing"
+              exit 1
+            fi
+
+            if [ -z "$GH_PRIVATE_KEY_B64" ]; then
+              echo "ERROR: Private key missing"
+              exit 1
+            fi
+
+            echo "GitHub App data retrieved successfully"
+
+            echo "=== RECONSTRUCTING PRIVATE KEY ==="
+
+            mkdir -p /tmp/github-app
+
+            echo "$GH_PRIVATE_KEY_B64" | base64 -d > /tmp/github-app/private-key.pem
+
+            chmod 600 /tmp/github-app/private-key.pem
+
+            if [ ! -s /tmp/github-app/private-key.pem ]; then
+              echo "ERROR: Private key reconstruction failed"
+              exit 1
+            fi
+
+            echo "Private key reconstructed successfully"
+
+            echo "=== GENERATING JWT ==="
+
+            NOW=$(date +%s)
+            IAT=$((NOW - 60))
+            EXP=$((NOW + 540))
+
+            HEADER='{"alg":"RS256","typ":"JWT"}'
+
+            PAYLOAD=$(printf \
+              '{"iat":%s,"exp":%s,"iss":"%s"}' \
+              "$IAT" \
+              "$EXP" \
+              "$GH_APP_ID")
+
+            base64url() {
+              openssl base64 -A | tr '+/' '-_' | tr -d '='
+            }
+
+            HEADER_B64=$(printf '%s' "$HEADER" | base64url)
+            PAYLOAD_B64=$(printf '%s' "$PAYLOAD" | base64url)
+
+            JWT_UNSIGNED="${HEADER_B64}.${PAYLOAD_B64}"
+
+            SIGNATURE=$(printf '%s' "$JWT_UNSIGNED" \
+              | openssl dgst \
+                  -sha256 \
+                  -sign /tmp/github-app/private-key.pem \
+              | base64url)
+
+            GH_JWT="${JWT_UNSIGNED}.${SIGNATURE}"
+
+            if [ -z "$GH_JWT" ]; then
+              echo "ERROR: JWT generation failed"
+              exit 1
+            fi
+
+            echo "GitHub App JWT generated successfully"
+
+            echo "=== VALIDATING GITHUB APP JWT ==="
+
+            HTTP_CODE=$(curl \
+              --silent \
+              --output /tmp/github-app/app-response.json \
+              --write-out "%{http_code}" \
+              --request GET \
+              --url "https://api.github.com/app" \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GH_JWT" \
+              --header "X-GitHub-Api-Version: 2026-03-10")
+
+            echo "GitHub /app HTTP status: $HTTP_CODE"
+
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "ERROR: GitHub App JWT validation failed"
+              cat /tmp/github-app/app-response.json
+              exit 1
+            fi
+
+            echo "GitHub App JWT validated successfully"
+
+            echo "=== REQUESTING INSTALLATION ACCESS TOKEN ==="
+
+            HTTP_CODE=$(curl \
+              --silent \
+              --output /tmp/github-app/token-response.json \
+              --write-out "%{http_code}" \
+              --request POST \
+              --url "https://api.github.com/app/installations/${GH_INSTALLATION_ID}/access_tokens" \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GH_JWT" \
+              --header "X-GitHub-Api-Version: 2026-03-10")
+
+            echo "Installation token HTTP status: $HTTP_CODE"
+
+            if [ "$HTTP_CODE" != "201" ]; then
+              echo "ERROR: Installation token request failed"
+              cat /tmp/github-app/token-response.json
+              exit 1
+            fi
+
+            INSTALLATION_TOKEN=$(az rest \
+              --method GET \
+              --url "file:///tmp/does-not-exist" \
+              2>/dev/null || true)
+
+            if grep -q '"token"' /tmp/github-app/token-response.json; then
+              echo "Installation access token received successfully"
+            else
+              echo "ERROR: Installation token missing from response"
+              exit 1
+            fi
+
+            echo "=== CLEANUP ==="
+
+            unset GH_PRIVATE_KEY_B64
+            unset GH_JWT
+            unset INSTALLATION_TOKEN
+
+            rm -f /tmp/github-app/private-key.pem
+            rm -f /tmp/github-app/token-response.json
+            rm -f /tmp/github-app/app-response.json
+
+            echo "Temporary credential material removed"
+
+            echo "======================================"
+            echo "GITHUB APP AUTHENTICATION TEST SUCCESSFUL"
+            echo "======================================"
+
+            sleep 300
+
+        resources:
+          cpu: 0.5
+          memory: 1Gi
+
+  workloadProfileName: Consumption
+
+resourceGroup: rg-github-runner-poc
+
+type: Microsoft.App/jobs

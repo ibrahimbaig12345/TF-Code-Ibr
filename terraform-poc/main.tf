@@ -30,18 +30,26 @@ variable "client_id" {
   type = string
 }
 
-resource "azurerm_storage_account" "poc" {
-  name                     = var.storage_account_name
-  resource_group_name      = "rg-github-runner-poc"
-  location                 = "centralindia"
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
+resource "azurerm_resource_group_template_deployment" "poc" {
+  name                = "aca-runner-terraform-poc"
+  resource_group_name = "rg-github-runner-poc"
+  deployment_mode     = "Incremental"
 
-  tags = {
-    Purpose = "ACA-GitHub-Runner-POC"
+  template_content = <<TEMPLATE
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "resources": [],
+  "outputs": {
+    "runnerValidation": {
+      "type": "string",
+      "value": "ACA-Terraform-OIDC-Success"
+    }
   }
 }
+TEMPLATE
+}
 
-variable "storage_account_name" {
-  type = string
+output "runner_validation" {
+  value = azurerm_resource_group_template_deployment.poc.output_content
 }

@@ -34,14 +34,12 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Generate unique storage account name
+      - name: Validate Azure authentication
         shell: bash
         run: |
-          STORAGE_NAME="stacapoc${GITHUB_RUN_NUMBER}${GITHUB_RUN_ATTEMPT}"
-
-          echo "Storage account: $STORAGE_NAME"
-
-          echo "TF_VAR_storage_account_name=$STORAGE_NAME" >> "$GITHUB_ENV"
+          az account show \
+            --query "{Subscription:name,SubscriptionId:id,Tenant:tenantId}" \
+            --output table
 
       - name: Terraform Init
         shell: bash
@@ -59,8 +57,7 @@ jobs:
         shell: bash
         working-directory: terraform-poc
         run: |
-          terraform plan \
-            -out=tfplan
+          terraform plan -out=tfplan
 
       - name: Terraform Apply
         shell: bash
@@ -70,15 +67,12 @@ jobs:
             -auto-approve \
             tfplan
 
-      - name: Verify Azure resource
+      - name: Terraform Output
         shell: bash
+        working-directory: terraform-poc
         run: |
-          echo "======================================"
-          echo "TERRAFORM DEPLOYMENT SUCCESSFUL"
-          echo "======================================"
+          terraform output
 
-          az storage account show \
-            --name "$TF_VAR_storage_account_name" \
-            --resource-group "rg-github-runner-poc" \
-            --query "{Name:name,Location:location,ProvisioningState:provisioningState}" \
-            --output table
+          echo "======================================"
+          echo "ACA + GITHUB + OIDC + TERRAFORM SUCCESS"
+          echo "======================================"

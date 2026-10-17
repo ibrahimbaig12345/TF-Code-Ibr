@@ -15,17 +15,15 @@ jobs:
       - name: Basic runner test
         shell: bash
         run: |
+          set -e
+
           echo "======================================"
           echo "ACA SELF-HOSTED RUNNER TEST"
           echo "======================================"
 
           echo ""
-          echo "Hostname:"
-          hostname
-
-          echo ""
           echo "Current user:"
-          whoami
+          whoami || true
 
           echo ""
           echo "Operating system:"
@@ -42,6 +40,12 @@ jobs:
           echo ""
           echo "Working directory:"
           pwd
+
+          echo ""
+          echo "Runner environment:"
+          echo "RUNNER_NAME=${RUNNER_NAME}"
+          echo "RUNNER_OS=${RUNNER_OS}"
+          echo "RUNNER_ARCH=${RUNNER_ARCH}"
 
           echo ""
           echo "======================================"

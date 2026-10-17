@@ -1,0 +1,49 @@
+name: ACA Self Hosted Runner Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  aca-runner-test:
+    name: Test ACA Runner
+
+    runs-on:
+      - self-hosted
+      - aca-poc-linux
+
+    steps:
+      - name: Basic runner test
+        shell: bash
+        run: |
+          echo "======================================"
+          echo "ACA SELF-HOSTED RUNNER TEST"
+          echo "======================================"
+
+          echo ""
+          echo "Hostname:"
+          hostname
+
+          echo ""
+          echo "Current user:"
+          whoami
+
+          echo ""
+          echo "Operating system:"
+          cat /etc/os-release
+
+          echo ""
+          echo "Git version:"
+          git --version
+
+          echo ""
+          echo "Azure CLI version:"
+          az version
+
+          echo ""
+          echo "Working directory:"
+          pwd
+
+          echo ""
+          echo "======================================"
+          echo "ACA RUNNER TEST SUCCESSFUL"
+          echo "======================================"

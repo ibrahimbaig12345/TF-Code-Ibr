@@ -1,78 +1,43 @@
-name: ACA Terraform OIDC Test
+name: ACA KEDA Scale From Zero Test
 
 on:
   workflow_dispatch:
 
-permissions:
-  id-token: write
-  contents: read
-
 jobs:
-  terraform:
+  keda-test:
+    name: KEDA Scale From Zero
+
     runs-on:
       - self-hosted
       - aca-poc-linux
 
-    env:
-      ARM_USE_OIDC: "true"
-      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      TF_VAR_client_id: ${{ secrets.AZURE_CLIENT_ID }}
-      TF_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
-      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Azure Login using OIDC
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Validate Azure authentication
+      - name: Validate event driven runner
         shell: bash
         run: |
-          az account show \
-            --query "{Subscription:name,SubscriptionId:id,Tenant:tenantId}" \
-            --output table
-
-      - name: Terraform Init
-        shell: bash
-        working-directory: terraform-poc
-        run: |
-          terraform init
-
-      - name: Terraform Validate
-        shell: bash
-        working-directory: terraform-poc
-        run: |
-          terraform validate
-
-      - name: Terraform Plan
-        shell: bash
-        working-directory: terraform-poc
-        run: |
-          terraform plan -out=tfplan
-
-      - name: Terraform Apply
-        shell: bash
-        working-directory: terraform-poc
-        run: |
-          terraform apply \
-            -auto-approve \
-            tfplan
-
-      - name: Terraform Output
-        shell: bash
-        working-directory: terraform-poc
-        run: |
-          terraform output
+          set -e
 
           echo "======================================"
-          echo "ACA + GITHUB + OIDC + TERRAFORM SUCCESS"
+          echo "ACA KEDA SCALE FROM ZERO SUCCESS"
           echo "======================================"
+
+          echo ""
+          echo "Runner Name: $RUNNER_NAME"
+          echo "Runner OS: $RUNNER_OS"
+          echo "Runner Architecture: $RUNNER_ARCH"
+
+          echo ""
+          echo "Git:"
+          git --version
+
+          echo ""
+          echo "Terraform:"
+          terraform version
+
+          echo ""
+          echo "PowerShell:"
+          pwsh --version
+
+          echo ""
+          echo "Azure CLI:"
+          az version
